@@ -1,0 +1,22 @@
+{
+  "name": "inputlagscope",
+  "private": true,
+  "version": "1.0.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "npm run build:release",
+    "build:release": "npx tauri build --no-bundle",
+    "dev:frontend": "vite --host 127.0.0.1 --port 1420",
+    "build:frontend": "vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "vite": "^7.0.0"
+  }
+}

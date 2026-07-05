@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>InputLagScope</title>
+  </head>
+  <body>
+    <header id="titlebar" class="titlebar" data-tauri-drag-region>
+      <div class="titlebar-brand" data-tauri-drag-region>
+        <span class="titlebar-mark" role="img" aria-label="InputLagScope"></span>
+        <span class="titlebar-name">InputLagScope</span>
+      </div>
+      <div class="titlebar-controls">
+        <button id="win-min" class="win-btn" type="button" aria-label="最小化" title="最小化">
+          <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 5 H10" stroke="currentColor" stroke-width="1" /></svg>
+        </button>
+        <button id="win-max" class="win-btn" type="button" aria-label="最大化" title="最大化">
+          <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1" /></svg>
+        </button>
+        <button id="win-close" class="win-btn win-close" type="button" aria-label="閉じる" title="閉じる">
+          <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 0 L10 10 M10 0 L0 10" stroke="currentColor" stroke-width="1" /></svg>
+        </button>
+      </div>
+    </header>
+    <main id="app"></main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
