@@ -62,6 +62,7 @@ const I18N = {
     running: "計測中",
     averageMs: "平均遅延(ms)",
     medianMs: "中央値(ms)",
+    p05Ms: "P05(ms)",
     p95Ms: "P95(ms)",
     jitterMs: "ジッター(ms)",
     pollRateHz: "ポーリングレート(Hz)",
@@ -157,6 +158,7 @@ const I18N = {
     running: "Running",
     averageMs: "Average Latency(ms)",
     medianMs: "Median(ms)",
+    p05Ms: "P05(ms)",
     p95Ms: "P95(ms)",
     jitterMs: "Jitter(ms)",
     pollRateHz: "Polling Rate(Hz)",
@@ -252,6 +254,7 @@ const I18N = {
     running: "测量中",
     averageMs: "平均延迟(ms)",
     medianMs: "中位数(ms)",
+    p05Ms: "P05(ms)",
     p95Ms: "P95(ms)",
     jitterMs: "抖动(ms)",
     pollRateHz: "轮询率(Hz)",
@@ -772,6 +775,7 @@ function renderLatencyMain() {
       <dl class="stats">
         <div><dt>${t("averageMs")}</dt><dd id="mean">-</dd></div>
         <div><dt>${t("medianMs")}</dt><dd id="median">-</dd></div>
+        <div><dt>${t("p05Ms")}</dt><dd id="p05">-</dd></div>
         <div><dt>${t("p95Ms")}</dt><dd id="p95">-</dd></div>
         <div><dt>${t("jitterMs")}</dt><dd id="jitter">-</dd></div>
       </dl>
@@ -939,6 +943,7 @@ function renderTesterLatencyMain() {
       <dl class="stats">
         <div><dt>${t("averageMs")}</dt><dd id="testerMean">-</dd></div>
         <div><dt>${t("medianMs")}</dt><dd id="testerMedian">-</dd></div>
+        <div><dt>${t("p05Ms")}</dt><dd id="testerP05">-</dd></div>
         <div><dt>${t("p95Ms")}</dt><dd id="testerP95">-</dd></div>
         <div><dt>${t("jitterMs")}</dt><dd id="testerJitter">-</dd></div>
       </dl>
@@ -1464,6 +1469,7 @@ function updateStatus(status) {
   setProgress("progress", requested > 0 ? (completed / requested) * 100 : 0);
   document.querySelector("#mean").textContent = fmtMs(status.summary?.average_ms);
   document.querySelector("#median").textContent = fmtMs(status.summary?.median_ms);
+  document.querySelector("#p05").textContent = fmtMs(status.summary?.p05_ms);
   document.querySelector("#p95").textContent = fmtMs(status.summary?.p95_ms);
   document.querySelector("#jitter").textContent = fmtMs(status.summary?.jitter_ms);
   document.querySelector("#log").textContent = (status.messages ?? []).join("\n");
@@ -1998,6 +2004,7 @@ function updateTesterStatus(status) {
   setProgress("progress", requested > 0 ? (received / requested) * 100 : 0);
   setText("#testerMean", fmtMs(latency ? latency.mean_ms : summary.average_ms));
   setText("#testerMedian", fmtMs(latency ? latency.p50_ms : summary.median_ms));
+  setText("#testerP05", fmtMs(latency ? latency.p05_ms : summary.p05_ms));
   setText("#testerP95", fmtMs(latency ? latency.p95_ms : summary.p95_ms));
   setText("#testerJitter", fmtMs(latency ? latency.std_dev_ms : summary.jitter_ms));
   setTesterLog(status.messages);
