@@ -34,7 +34,7 @@ USBハブやチップセット経由のポートでは経路上の遅延が計�
 
 - Windows PC
 - [CH32H417-Latency-Tester](https://github.com/608/CH32H417-Latency-Tester)を書き込んだWCH CH32H417QEU6-EVTボード
-- (PCホストで計測する場合)[InputLagScope-Firmware](https://github.com/608/InputLagScope-Firmware)を書き込んだRaspberry Pi Pico、またはRP2040ベースの開発ボード
+- PCホストで計測する場合 : [InputLagScope-Firmware](https://github.com/608/InputLagScope-Firmware)を書き込んだRaspberry Pi Pico、またはRP2040ベースの開発ボード
 - 計測対象のコントローラー
 
 ## 計測手順
