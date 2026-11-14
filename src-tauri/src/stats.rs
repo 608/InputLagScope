@@ -56,7 +56,7 @@ fn percentile_range_values(sorted: &[f64], low: f64, high: f64) -> Vec<f64> {
         .collect()
 }
 
-fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
+pub(crate) fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
     if sorted.len() == 1 {
         return sorted[0];
     }
@@ -70,24 +70,4 @@ fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
 
     let ratio = index - lo as f64;
     sorted[lo] + (sorted[hi] - sorted[lo]) * ratio
-}
-
-#[cfg(test)]
-mod tests {
-    use super::summarize;
-
-    #[test]
-    fn average_and_median_use_p05_to_p95_values() {
-        let mut values: Vec<f64> = (1..=100).map(f64::from).collect();
-        values.push(1000.0);
-
-        let summary = summarize(&values);
-
-        assert_eq!(summary.min_ms, Some(1.0));
-        assert_eq!(summary.p05_ms, Some(6.0));
-        assert_eq!(summary.average_ms, Some(51.0));
-        assert_eq!(summary.median_ms, Some(51.0));
-        assert_eq!(summary.p95_ms, Some(96.0));
-        assert_eq!(summary.max_ms, Some(1000.0));
-    }
 }

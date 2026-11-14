@@ -26,7 +26,7 @@ pub fn parse_report_with_descriptor(
     }
 }
 
-fn parse_ds4(raw: &[u8]) -> Option<InputState> {
+pub(crate) fn parse_ds4(raw: &[u8]) -> Option<InputState> {
     if raw.len() < 10 || raw[0] != 0x01 {
         return None;
     }
@@ -47,7 +47,7 @@ fn parse_ds4(raw: &[u8]) -> Option<InputState> {
     Some(InputState { buttons, axes })
 }
 
-fn parse_dualsense(raw: &[u8]) -> Option<InputState> {
+pub(crate) fn parse_dualsense(raw: &[u8]) -> Option<InputState> {
     if raw.len() < 12 || raw[0] != 0x01 {
         return None;
     }
@@ -67,7 +67,7 @@ fn parse_dualsense(raw: &[u8]) -> Option<InputState> {
     Some(InputState { buttons, axes })
 }
 
-fn parse_switch(raw: &[u8]) -> Option<InputState> {
+pub(crate) fn parse_switch(raw: &[u8]) -> Option<InputState> {
     if raw.len() < 13 || raw[0] != 0x30 {
         return None;
     }
@@ -138,15 +138,15 @@ fn dpad_buttons(hat: u8) -> [bool; 4] {
     [up, right, down, left]
 }
 
-fn normalize_u8(value: u8) -> f32 {
+pub(crate) fn normalize_u8(value: u8) -> f32 {
     ((value as f32 - 127.5) / 127.5).clamp(-1.0, 1.0)
 }
 
-fn normalize_u12(value: u16) -> f32 {
+pub(crate) fn normalize_u12(value: u16) -> f32 {
     ((value as f32 - 2048.0) / 2048.0).clamp(-1.0, 1.0)
 }
 
-fn normalize_i16(value: i16) -> f32 {
+pub(crate) fn normalize_i16(value: i16) -> f32 {
     if value >= 0 {
         value as f32 / i16::MAX as f32
     } else {

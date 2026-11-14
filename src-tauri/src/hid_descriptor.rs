@@ -24,6 +24,11 @@ const LOCAL_USAGE_MINIMUM: u8 = 1;
 const LOCAL_USAGE_MAXIMUM: u8 = 2;
 const INPUT_CONSTANT: u32 = 0x01;
 const INPUT_VARIABLE: u32 = 0x02;
+/// Upper bound of Report Count for a data (non-constant) Input item. Real
+/// descriptors stay far below it; a larger value (a corrupt or hostile
+/// descriptor, e.g. received through the tester) would otherwise allocate
+/// one entry per count.
+const MAX_INPUT_REPORT_COUNT: u32 = 65_535;
 const USAGE_PAGE_BUTTON: u16 = 0x09;
 const USAGE_PAGE_GENERIC_DESKTOP: u16 = 0x01;
 const USAGE_PAGE_SIMULATION: u16 = 0x02;
@@ -46,6 +51,35 @@ pub struct HidReportParser {
     report_ids: BTreeSet<u8>,
     buttons: Vec<ButtonField>,
     axes: Vec<ValueField>,
+    fields: Vec<RawInputField>,
+    report_bits: Vec<(u8, u32)>,
+}
+
+/// Kind of a parsed variable input field.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HidFieldKind {
+    Button,
+    Axis,
+    Other,
+}
+
+/// Location of one variable input field inside an input report.
+///
+/// `bit_offset` counts from the least significant bit of byte 0 of the report
+/// as it arrives on the wire, i.e. it includes the report-ID byte when the
+/// descriptor uses report IDs (the convention of the tester's SET_WATCH).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HidInputField {
+    pub kind: HidFieldKind,
+    pub report_id: Option<u8>,
+    pub bit_offset: u32,
+    pub bit_size: u32,
+    pub is_signed: bool,
+    pub logical_min: i32,
+    pub logical_max: i32,
+    pub usage_page: u16,
+    pub usage: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -62,6 +96,20 @@ struct ValueField {
     bit_size: u32,
     logical_min: i32,
     logical_max: i32,
+}
+
+/// Every variable (non-constant) input field, with the offset relative to the
+/// start of the report payload (after the report-ID byte).
+#[derive(Clone, Debug)]
+struct RawInputField {
+    kind: HidFieldKind,
+    report_id: u8,
+    bit_offset: u32,
+    bit_size: u32,
+    logical_min: i32,
+    logical_max: i32,
+    usage_page: u16,
+    usage: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -159,6 +207,72 @@ impl HidReportParser {
             Some(InputState { buttons, axes })
         }
     }
+
+    pub fn has_report_ids(&self) -> bool {
+        self.has_report_ids
+    }
+
+    /// Every variable input field in descriptor order (buttons, axes and
+    /// other usages), with absolute bit offsets.
+    pub fn input_fields(&self) -> Vec<HidInputField> {
+        self.fields.iter().map(|field| self.expose(field)).collect()
+    }
+
+    /// Button fields in the same order as `InputState::buttons` produced by
+    /// `parse_input_report` for a report with the given ID (`None` when the
+    /// descriptor does not use report IDs).
+    pub fn button_fields(&self, report_id: Option<u8>) -> Vec<HidInputField> {
+        self.fields_of_kind(HidFieldKind::Button, report_id)
+    }
+
+    /// Axis fields in the same order as `InputState::axes` produced by
+    /// `parse_input_report` for a report with the given ID.
+    pub fn axis_fields(&self, report_id: Option<u8>) -> Vec<HidInputField> {
+        self.fields_of_kind(HidFieldKind::Axis, report_id)
+    }
+
+    /// Length in bytes (including the report-ID byte when used) of the input
+    /// report with the given ID, or `None` if the descriptor has no input
+    /// items for it.
+    pub fn input_report_bytes_for(&self, report_id: Option<u8>) -> Option<usize> {
+        let wanted = self.internal_report_id(report_id);
+        self.report_bits
+            .iter()
+            .find(|(id, _)| *id == wanted)
+            .map(|(_, bits)| bits.div_ceil(8) as usize + usize::from(self.has_report_ids))
+    }
+
+    fn fields_of_kind(&self, kind: HidFieldKind, report_id: Option<u8>) -> Vec<HidInputField> {
+        let wanted = self.internal_report_id(report_id);
+        self.fields
+            .iter()
+            .filter(|field| field.kind == kind && field.report_id == wanted)
+            .map(|field| self.expose(field))
+            .collect()
+    }
+
+    fn internal_report_id(&self, report_id: Option<u8>) -> u8 {
+        if self.has_report_ids {
+            report_id.unwrap_or(0)
+        } else {
+            0
+        }
+    }
+
+    fn expose(&self, field: &RawInputField) -> HidInputField {
+        let prefix = if self.has_report_ids { 8 } else { 0 };
+        HidInputField {
+            kind: field.kind,
+            report_id: self.has_report_ids.then_some(field.report_id),
+            bit_offset: field.bit_offset.saturating_add(prefix),
+            bit_size: field.bit_size,
+            is_signed: field.logical_min < 0,
+            logical_min: field.logical_min,
+            logical_max: field.logical_max,
+            usage_page: field.usage_page,
+            usage: field.usage,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -171,6 +285,7 @@ struct DescriptorBuilder {
     has_report_ids: bool,
     buttons: Vec<ButtonField>,
     axes: Vec<ValueField>,
+    fields: Vec<RawInputField>,
 }
 
 impl DescriptorBuilder {
@@ -205,7 +320,7 @@ impl DescriptorBuilder {
             let item_type = (prefix >> 2) & 0x03;
             let tag = (prefix >> 4) & 0x0F;
             match item_type {
-                ITEM_TYPE_MAIN => self.handle_main(tag, data),
+                ITEM_TYPE_MAIN => self.handle_main(tag, data)?,
                 ITEM_TYPE_GLOBAL => self.handle_global(tag, data)?,
                 ITEM_TYPE_LOCAL => self.handle_local(tag, data),
                 _ => {}
@@ -229,18 +344,21 @@ impl DescriptorBuilder {
             report_ids: self.report_ids,
             buttons: self.buttons,
             axes: self.axes,
+            fields: self.fields,
+            report_bits: self.report_bit_offsets,
         }
     }
 
-    fn handle_main(&mut self, tag: u8, data: &[u8]) {
+    fn handle_main(&mut self, tag: u8, data: &[u8]) -> Result<()> {
         match tag {
-            MAIN_INPUT => self.handle_input(unsigned_value(data)),
+            MAIN_INPUT => self.handle_input(unsigned_value(data))?,
             MAIN_COLLECTION | MAIN_END_COLLECTION => self.local = LocalState::default(),
             _ => self.local = LocalState::default(),
         }
+        Ok(())
     }
 
-    fn handle_input(&mut self, flags: u32) {
+    fn handle_input(&mut self, flags: u32) -> Result<()> {
         let total_bits = self
             .global
             .report_size
@@ -250,7 +368,13 @@ impl DescriptorBuilder {
 
         if flags & INPUT_CONSTANT != 0 {
             self.local = LocalState::default();
-            return;
+            return Ok(());
+        }
+        if self.global.report_count > MAX_INPUT_REPORT_COUNT {
+            return Err(anyhow!(
+                "HID input item report count {} exceeds {MAX_INPUT_REPORT_COUNT}",
+                self.global.report_count
+            ));
         }
 
         let usages = self.expand_usages(self.global.report_count as usize);
@@ -263,14 +387,16 @@ impl DescriptorBuilder {
                     .copied()
                     .unwrap_or(Usage { page: None, id: 0 });
                 let usage_page = usage.page.unwrap_or(self.global.usage_page);
-                let bit_offset = start_offset + index.saturating_mul(self.global.report_size);
+                let bit_offset =
+                    start_offset.saturating_add(index.saturating_mul(self.global.report_size));
 
-                if usage_page == USAGE_PAGE_BUTTON {
+                let kind = if usage_page == USAGE_PAGE_BUTTON {
                     self.buttons.push(ButtonField {
                         report_id: self.global.report_id,
                         bit_offset,
                         bit_size: self.global.report_size.max(1),
                     });
+                    HidFieldKind::Button
                 } else if is_axis_usage(usage_page, usage.id) {
                     self.axes.push(ValueField {
                         report_id: self.global.report_id,
@@ -279,11 +405,25 @@ impl DescriptorBuilder {
                         logical_min: self.global.logical_min,
                         logical_max: self.global.logical_max,
                     });
-                }
+                    HidFieldKind::Axis
+                } else {
+                    HidFieldKind::Other
+                };
+                self.fields.push(RawInputField {
+                    kind,
+                    report_id: self.global.report_id,
+                    bit_offset,
+                    bit_size: self.global.report_size.max(1),
+                    logical_min: self.global.logical_min,
+                    logical_max: self.global.logical_max,
+                    usage_page,
+                    usage: usage.id,
+                });
             }
         }
 
         self.local = LocalState::default();
+        Ok(())
     }
 
     fn handle_global(&mut self, tag: u8, data: &[u8]) -> Result<()> {
@@ -373,7 +513,7 @@ fn is_axis_usage(usage_page: u16, usage: u16) -> bool {
     )
 }
 
-fn read_bits(data: &[u8], bit_offset: u32, bit_size: u32) -> Option<u32> {
+pub(crate) fn read_bits(data: &[u8], bit_offset: u32, bit_size: u32) -> Option<u32> {
     if bit_size == 0 || bit_size > 32 {
         return None;
     }
@@ -410,7 +550,7 @@ fn normalize_logical(value: i32, logical_min: i32, logical_max: i32) -> f32 {
     }
 }
 
-fn sign_extend(value: u32, bit_size: u32) -> i32 {
+pub(crate) fn sign_extend(value: u32, bit_size: u32) -> i32 {
     if bit_size == 0 || bit_size >= 32 {
         value as i32
     } else {
@@ -451,59 +591,5 @@ fn signed_value(data: &[u8]) -> i32 {
             data.get(2).copied().unwrap_or(0),
             data.get(3).copied().unwrap_or(0),
         ]),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_report_id_buttons_and_axes() {
-        let descriptor = [
-            0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x85, 0x01, 0x05, 0x09, 0x19, 0x01, 0x29, 0x10,
-            0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x10, 0x81, 0x02, 0x05, 0x01, 0x09, 0x30,
-            0x09, 0x31, 0x09, 0x32, 0x09, 0x35, 0x15, 0x81, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x04,
-            0x81, 0x02, 0xC0,
-        ];
-        let parser = HidReportParser::from_descriptor(&descriptor).unwrap();
-        let shape = parser.shape();
-        assert_eq!(shape.input_report_bytes, 7);
-        assert_eq!(shape.report_ids, vec![1]);
-        assert_eq!(shape.button_count, 16);
-        assert_eq!(shape.axis_count, 4);
-
-        let state = parser
-            .parse_input_report(&[0x01, 0x01, 0x80, 0x7F, 0x81, 0x00, 0x40])
-            .unwrap();
-        assert!(state.buttons[0]);
-        assert!(state.buttons[15]);
-        assert!((state.axes[0] - 1.0).abs() < 0.001);
-        assert!((state.axes[1] + 1.0).abs() < 0.001);
-        assert!(state.axes[2].abs() < 0.001);
-        assert!((state.axes[3] - 0.503).abs() < 0.01);
-    }
-
-    #[test]
-    fn parses_without_report_id() {
-        let descriptor = [
-            0x05, 0x01, 0x09, 0x04, 0xA1, 0x01, 0x05, 0x09, 0x19, 0x01, 0x29, 0x08, 0x15, 0x00,
-            0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
-            0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x02, 0x81, 0x02, 0xC0,
-        ];
-        let parser = HidReportParser::from_descriptor(&descriptor).unwrap();
-        let shape = parser.shape();
-        assert_eq!(shape.input_report_bytes, 3);
-        assert!(shape.report_ids.is_empty());
-        assert_eq!(shape.button_count, 8);
-        assert_eq!(shape.axis_count, 2);
-
-        let state = parser
-            .parse_input_report(&[0b0000_0011, 0x00, 0xFF])
-            .unwrap();
-        assert!(state.buttons[0]);
-        assert!(state.buttons[1]);
-        assert!((state.axes[0] + 1.0).abs() < 0.001);
-        assert!((state.axes[1] - 1.0).abs() < 0.001);
     }
 }

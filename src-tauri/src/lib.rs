@@ -10,8 +10,10 @@ mod measurement;
 mod models;
 mod polling_rate;
 mod protocol;
+mod report_layout;
 mod serial_trigger;
 mod stats;
+mod tester;
 mod thread_tuning;
 mod windows_hid;
 mod xinput;
@@ -27,13 +29,20 @@ use std::thread::JoinHandle;
 
 #[cfg(not(test))]
 use models::{
-    AxisThresholdCalibration, MeasurementConfig, MeasurementStatus, PollTestConfig, PollTestStatus,
-    ProbeResult,
+    AttachedController, AxisThresholdCalibration, MeasurementConfig, MeasurementStatus,
+    PollTestConfig, PollTestStatus, ProbeResult,
 };
 #[cfg(not(test))]
 use parking_lot::Mutex;
 #[cfg(not(test))]
 use tauri::State;
+#[cfg(not(test))]
+use tester::app::TesterApp;
+#[cfg(not(test))]
+use tester::model::{
+    EnumTraceExport, TesterMeasurementConfig, TesterMeasurementStatus,
+    TesterPollStatus, TesterPollTestConfig, TesterProbeResult,
+};
 
 #[cfg(not(test))]
 struct WorkerHandle {
@@ -49,6 +58,7 @@ struct AppState {
     status: Arc<Mutex<MeasurementStatus>>,
     poll_status: Arc<Mutex<PollTestStatus>>,
     last_probe: Arc<Mutex<Option<ProbeResult>>>,
+    tester: Arc<TesterApp>,
 }
 
 #[cfg(not(test))]
@@ -61,8 +71,108 @@ impl Default for AppState {
             status: Arc::new(Mutex::new(MeasurementStatus::idle())),
             poll_status: Arc::new(Mutex::new(PollTestStatus::idle())),
             last_probe: Arc::new(Mutex::new(None)),
+            tester: Arc::new(TesterApp::with_serial_ports()),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// CH32H417 tester commands (separate from the Windows-HID path below)
+
+#[cfg(not(test))]
+async fn run_tester_blocking<T, F>(state: &State<'_, AppState>, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<TesterApp>) -> anyhow::Result<T> + Send + 'static,
+{
+    let app = state.tester.clone();
+    tauri::async_runtime::spawn_blocking(move || task(app).map_err(|error| format!("{error:#}")))
+        .await
+        .map_err(|error| format!("tester task failed: {error}"))?
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+async fn tester_probe(state: State<'_, AppState>) -> Result<TesterProbeResult, String> {
+    run_tester_blocking(&state, |app| Ok(app.probe())).await
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+async fn tester_start_measurement(
+    state: State<'_, AppState>,
+    config: TesterMeasurementConfig,
+) -> Result<(), String> {
+    run_tester_blocking(&state, move |app| app.start_measurement(config)).await
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+fn tester_stop_measurement(state: State<'_, AppState>) -> Result<(), String> {
+    state.tester.stop_measurement();
+    Ok(())
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+fn tester_measurement_status(
+    state: State<'_, AppState>,
+) -> Result<TesterMeasurementStatus, String> {
+    Ok(state.tester.measurement_status())
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+async fn tester_start_poll_test(
+    state: State<'_, AppState>,
+    config: TesterPollTestConfig,
+) -> Result<(), String> {
+    run_tester_blocking(&state, move |app| app.start_poll_test(config)).await
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+fn tester_stop_poll_test(state: State<'_, AppState>) -> Result<(), String> {
+    state.tester.stop_poll_test();
+    Ok(())
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+fn tester_poll_status(state: State<'_, AppState>) -> Result<TesterPollStatus, String> {
+    Ok(state.tester.poll_status())
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+async fn tester_auto_axis_threshold(
+    state: State<'_, AppState>,
+    config: TesterMeasurementConfig,
+) -> Result<AxisThresholdCalibration, String> {
+    run_tester_blocking(&state, move |app| app.auto_axis_threshold(&config)).await
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+async fn tester_reenumerate(
+    state: State<'_, AppState>,
+    tester: String,
+) -> Result<Option<AttachedController>, String> {
+    run_tester_blocking(&state, move |app| app.reenumerate(&tester)).await
+}
+
+#[cfg(not(test))]
+#[tauri::command]
+async fn tester_export_enum_trace(
+    state: State<'_, AppState>,
+    tester: String,
+    output_dir: String,
+    previous: Option<bool>,
+) -> Result<EnumTraceExport, String> {
+    run_tester_blocking(&state, move |app| {
+        app.export_enum_trace(&tester, &output_dir, previous.unwrap_or(false))
+    })
+    .await
 }
 
 #[cfg(not(test))]
@@ -266,6 +376,16 @@ pub fn run() {
             stop_poll_test,
             poll_test_status,
             auto_axis_threshold,
+            tester_probe,
+            tester_start_measurement,
+            tester_stop_measurement,
+            tester_measurement_status,
+            tester_start_poll_test,
+            tester_stop_poll_test,
+            tester_poll_status,
+            tester_auto_axis_threshold,
+            tester_reenumerate,
+            tester_export_enum_trace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

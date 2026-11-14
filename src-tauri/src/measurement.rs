@@ -20,9 +20,9 @@ use crate::serial_trigger::SerialTrigger;
 use crate::stats::summarize;
 use crate::thread_tuning::set_current_thread_high_priority;
 
-const RING_CAPACITY: usize = 8192;
+pub(crate) const RING_CAPACITY: usize = 8192;
 const RANDOM_WAIT_MAX_US: u64 = 999;
-const AXIS_CALIBRATION_MIN_DELTA: f32 = 0.02;
+pub(crate) const AXIS_CALIBRATION_MIN_DELTA: f32 = 0.02;
 const AXIS_CALIBRATION_NOISE_MULTIPLIER: f32 = 3.0;
 const AXIS_CALIBRATION_DELTA_RATIO: f32 = 0.3;
 const AXIS_CALIBRATION_DELTA_CAP: f32 = 0.85;
@@ -113,6 +113,7 @@ pub fn auto_axis_threshold(
             activated_value: peak.value.unwrap_or(neutral_value),
             delta: peak.value.unwrap_or(neutral_value) - neutral_value,
             noise,
+            report_id: None,
         })
     })();
 
@@ -141,6 +142,9 @@ fn run_measurement_inner(
     stop: Arc<AtomicBool>,
 ) -> Result<()> {
     set_current_thread_high_priority();
+    if config.input_type == MeasurementInputType::Axis {
+        validate_axis_threshold(config.axis_threshold)?;
+    }
 
     {
         let mut status = status.lock();
@@ -271,6 +275,8 @@ fn run_measurement_inner(
         latency_bins: bins.clone(),
         trials,
         neutral_axes,
+        measurement_target: None,
+        tester: None,
     })?;
 
     {
@@ -291,7 +297,7 @@ fn run_measurement_inner(
     Ok(())
 }
 
-fn push_summary_lines(status: &mut MeasurementStatus, summary: &Summary) {
+pub(crate) fn push_summary_lines(status: &mut MeasurementStatus, summary: &Summary) {
     if summary.count == 0 {
         return;
     }
@@ -457,7 +463,7 @@ fn detect_axis_target(
     Err(anyhow!("target axis detection timed out"))
 }
 
-fn wait_for_first_sample(
+pub(crate) fn wait_for_first_sample(
     sample_rx: &Receiver<RawSample>,
     ring: &mut VecDeque<RawSample>,
     timeout: Duration,
@@ -511,7 +517,7 @@ fn collect_neutral_axes(
         .collect()
 }
 
-fn collect_axis_means(
+pub(crate) fn collect_axis_means(
     sample_rx: &Receiver<RawSample>,
     ring: &mut VecDeque<RawSample>,
     duration: Duration,
@@ -546,7 +552,7 @@ fn collect_axis_means(
         .collect()
 }
 
-fn collect_peak_axis_delta(
+pub(crate) fn collect_peak_axis_delta(
     sample_rx: &Receiver<RawSample>,
     ring: &mut VecDeque<RawSample>,
     neutral_axes: &[f32],
@@ -579,7 +585,7 @@ fn collect_peak_axis_delta(
     best
 }
 
-fn peak_axis_delta(
+pub(crate) fn peak_axis_delta(
     sample: &RawSample,
     neutral_axes: &[f32],
     axis_index: i32,
@@ -621,7 +627,7 @@ fn peak_axis_delta(
         .max_by(|a, b| a.score.total_cmp(&b.score))
 }
 
-fn calibrated_axis_threshold(delta: f32, noise: f32) -> f32 {
+pub(crate) fn calibrated_axis_threshold(delta: f32, noise: f32) -> f32 {
     let threshold = (delta * AXIS_CALIBRATION_DELTA_RATIO)
         .max(noise * AXIS_CALIBRATION_NOISE_MULTIPLIER)
         .max(0.01);
@@ -754,15 +760,15 @@ fn sample_matches(
 }
 
 #[derive(Clone, Debug)]
-struct DetectionHit {
-    index: usize,
-    value: Option<f32>,
-    button_state: Option<bool>,
-    axis_direction: Option<i8>,
-    score: f32,
+pub(crate) struct DetectionHit {
+    pub(crate) index: usize,
+    pub(crate) value: Option<f32>,
+    pub(crate) button_state: Option<bool>,
+    pub(crate) axis_direction: Option<i8>,
+    pub(crate) score: f32,
 }
 
-fn detect_button_hit(
+pub(crate) fn detect_button_hit(
     sample: &RawSample,
     baseline: &RawSample,
     button_index: Option<usize>,
@@ -817,7 +823,7 @@ fn button_state_matches(current: bool, previous: bool, expected_state: Option<bo
     }
 }
 
-fn detect_axis_hit(
+pub(crate) fn detect_axis_hit(
     sample: &RawSample,
     neutral_axes: &[f32],
     axis_index: i32,
@@ -860,6 +866,21 @@ fn detect_axis_hit(
         .max_by(|a, b| a.score.total_cmp(&b.score))
 }
 
+/// Normalized axis values lie in [-1, 1], so a deflection from the
+/// neutral is at most 2. A threshold of 0 or below matches every sample
+/// (`axis_delta_matches`), NaN matches none, and above 2 can never match.
+pub(crate) const MAX_AXIS_THRESHOLD: f32 = 2.0;
+
+pub(crate) fn validate_axis_threshold(threshold: f32) -> Result<()> {
+    if !threshold.is_finite() || threshold <= 0.0 || threshold > MAX_AXIS_THRESHOLD {
+        return Err(anyhow!(
+            "axis threshold {threshold} is invalid: it must be a finite value greater than 0 \
+             and at most {MAX_AXIS_THRESHOLD} (normalized units)"
+        ));
+    }
+    Ok(())
+}
+
 fn axis_delta_matches(delta: f32, axis_direction: Option<i8>, threshold: f32) -> bool {
     match axis_direction {
         Some(direction) if direction > 0 => delta >= threshold,
@@ -880,20 +901,20 @@ fn raw_changed(sample: &RawSample, baseline: &RawSample) -> bool {
     sample.raw_report != baseline.raw_report
 }
 
-fn drain_samples(sample_rx: &Receiver<RawSample>, ring: &mut VecDeque<RawSample>) {
+pub(crate) fn drain_samples(sample_rx: &Receiver<RawSample>, ring: &mut VecDeque<RawSample>) {
     while let Ok(sample) = sample_rx.try_recv() {
         push_ring(ring, sample);
     }
 }
 
-fn push_ring(ring: &mut VecDeque<RawSample>, sample: RawSample) {
+pub(crate) fn push_ring(ring: &mut VecDeque<RawSample>, sample: RawSample) {
     if ring.len() >= RING_CAPACITY {
         ring.pop_front();
     }
     ring.push_back(sample);
 }
 
-fn latest_sample(ring: &VecDeque<RawSample>) -> Option<&RawSample> {
+pub(crate) fn latest_sample(ring: &VecDeque<RawSample>) -> Option<&RawSample> {
     ring.back()
 }
 
@@ -932,7 +953,7 @@ impl RandomWait {
     }
 }
 
-fn save_result(result: MeasurementResult) -> Result<PathBuf> {
+pub(crate) fn save_result(result: MeasurementResult) -> Result<PathBuf> {
     let output_dir = PathBuf::from(&result.config.output_dir);
     fs::create_dir_all(&output_dir)?;
     let seconds = SystemTime::now()

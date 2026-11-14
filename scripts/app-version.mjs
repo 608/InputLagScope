@@ -1,5 +1,5 @@
 export const APP_NAME = "InputLagScope";
-export const APP_VERSION_CODE = 0x1000;
+export const APP_VERSION_CODE = 0x1100;
 
 export function appVersionParts(code = APP_VERSION_CODE) {
   return {

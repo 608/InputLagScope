@@ -1,4 +1,8 @@
 :root {
+  --ui-scale: 1;
+  --ui-base-width: 980px;
+  --ui-base-height: 680px;
+
   --accent: #f05a1a;
   --accent-hover: #d94b0f;
   --accent-active: #b83d0c;
@@ -42,12 +46,17 @@
 body {
   margin: 0;
   height: 100vh;
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
   background: var(--bg);
   user-select: none;
   -webkit-user-select: none;
+}
+
+.ui-scale-root {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  zoom: var(--ui-scale);
 }
 
 h1,
@@ -918,6 +927,96 @@ tbody tr.selected {
 .log {
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* ---------- Tester route ---------- */
+
+[hidden] {
+  display: none !important;
+}
+
+.field-caption {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.segmented label:has(input:disabled) {
+  cursor: default;
+}
+
+.segmented label:has(input:disabled:not(:checked)) {
+  opacity: 0.58;
+}
+
+.form-error {
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+table.table-static tbody tr {
+  cursor: default;
+}
+
+.panel-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.panel-actions button {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.panel-note {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.main .panel > .panel-note,
+.main .panel > .form-error {
+  margin-bottom: 10px;
+}
+
+.calibration-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.badge-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-title .badge-warn {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: help;
+}
+
+.panel-title .run-state.is-error {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+.run-state.is-error::before {
+  background: var(--danger);
 }
 
 /* ---------- Scrollbars ---------- */

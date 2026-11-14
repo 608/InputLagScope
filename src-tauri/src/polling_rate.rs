@@ -103,6 +103,7 @@ fn run_poll_test_inner(
         bins: bins.clone(),
         intervals_us,
         stalls,
+        tester: None,
     })?;
 
     {
@@ -179,7 +180,7 @@ fn update_running_status(
     status.bins = bins;
 }
 
-fn summarize_poll_samples(
+pub(crate) fn summarize_poll_samples(
     device: &DeviceInfo,
     timestamps: &[u64],
     capture_duration_ms: Option<f64>,
@@ -238,8 +239,8 @@ fn summarize_poll_samples(
         median_interval_us: (!sorted.is_empty()).then(|| percentile_sorted(&sorted, 50.0)),
         p95_interval_us: (!sorted.is_empty()).then(|| percentile_sorted(&sorted, 95.0)),
         max_interval_us: sorted.last().copied(),
-        stall_count: stalls.len(),
-        stall_ms: stalls.iter().map(|stall| stall.interval_us).sum::<f64>() / 1000.0,
+        stall_count: Some(stalls.len()),
+        stall_ms: Some(stalls.iter().map(|stall| stall.interval_us).sum::<f64>() / 1000.0),
         stall_threshold_us,
         capture_duration_ms,
     };
@@ -248,7 +249,7 @@ fn summarize_poll_samples(
     (summary, bins, intervals_us, stalls)
 }
 
-fn timing_bins(intervals: &[f64]) -> Vec<PollTimingBin> {
+pub(crate) fn timing_bins(intervals: &[f64]) -> Vec<PollTimingBin> {
     if intervals.is_empty() {
         return Vec::new();
     }
@@ -295,7 +296,7 @@ fn timing_bins(intervals: &[f64]) -> Vec<PollTimingBin> {
         .collect()
 }
 
-fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
+pub(crate) fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
@@ -322,7 +323,7 @@ fn vid_pid(device: &DeviceInfo) -> Option<String> {
     ))
 }
 
-fn save_result(result: PollTestResult) -> Result<PathBuf> {
+pub(crate) fn save_result(result: PollTestResult) -> Result<PathBuf> {
     let output_dir = PathBuf::from(&result.config.output_dir);
     fs::create_dir_all(&output_dir)?;
     let seconds = SystemTime::now()

@@ -81,6 +81,10 @@ pub struct AxisThresholdCalibration {
     pub activated_value: f32,
     pub delta: f32,
     pub noise: f32,
+    /// Report ID the axis index refers to (tester path, generic HID with
+    /// report IDs only); omitted from the JSON otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_id: Option<u8>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -179,6 +183,110 @@ pub struct MeasurementResult {
     pub latency_bins: Vec<LatencyBin>,
     pub trials: Vec<TrialResult>,
     pub neutral_axes: Vec<f32>,
+    /// Set only for measurements through the CH32H417 tester; the
+    /// Windows-HID path leaves it out of the JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement_target: Option<MeasurementTarget>,
+    /// Tester-specific values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tester: Option<crate::tester::model::TesterMeasurementSection>,
+}
+
+/// A CH32H417 tester found on a COM port.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TesterInfo {
+    pub port_name: String,
+    /// Chip unique ID from HELLO (32 hex digits).
+    pub uuid: String,
+    pub fw_major: u16,
+    pub fw_minor: u16,
+    pub firmware_version: String,
+    pub build: String,
+    pub protocol_version: u8,
+    pub capabilities: u32,
+    pub capability_names: Vec<String>,
+    pub max_payload: u16,
+    pub max_poll_raw_count: u32,
+    pub session_id: u32,
+}
+
+/// HID report descriptor of one interface, as fetched from the tester.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InterfaceReportDescriptor {
+    pub interface_number: u8,
+    pub descriptor: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ControllerDescriptors {
+    pub device: Vec<u8>,
+    pub configuration: Vec<u8>,
+    pub report_descriptors: Vec<InterfaceReportDescriptor>,
+    /// Descriptors that could not be fetched (not fatal).
+    pub errors: Vec<String>,
+}
+
+/// The controller attached to a tester's host port.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AttachedController {
+    pub device_generation: u32,
+    pub speed: u8,
+    pub speed_name: String,
+    pub address: u8,
+    pub vendor_id: u16,
+    pub product_id: u16,
+    pub bcd_usb: u16,
+    pub bcd_device: u16,
+    pub device_class: u8,
+    pub classification: u8,
+    pub classification_name: String,
+    pub num_interfaces: u8,
+    pub vendor_code_state: u8,
+    pub vendor_code: u8,
+    pub interfaces: Vec<crate::tester::protocol::InterfaceInfo>,
+    pub manufacturer: Option<String>,
+    pub product: Option<String>,
+    pub serial_number: Option<String>,
+    pub protocol: crate::report_layout::ControllerProtocol,
+    pub target_interface: Option<u8>,
+    pub target_ep_in: Option<u8>,
+    /// Polling period of the target IN endpoint derived from bInterval, the
+    /// speed and the host profile's interval_mode.
+    pub poll_period_us: Option<f64>,
+    pub parsed_button_count: Option<usize>,
+    pub parsed_axis_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descriptors: Option<ControllerDescriptors>,
+}
+
+impl AttachedController {
+    pub fn display_name(&self) -> String {
+        self.product
+            .clone()
+            .unwrap_or_else(|| format!("Controller {:04X}:{:04X}", self.vendor_id, self.product_id))
+    }
+
+    /// Copy without the (large) descriptor bytes, for status polling.
+    pub fn without_descriptors(&self) -> Self {
+        Self {
+            descriptors: None,
+            ..self.clone()
+        }
+    }
+}
+
+/// What a measurement targets: a controller seen by Windows (existing
+/// path) or a controller attached to the tester.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MeasurementTarget {
+    Hid {
+        device: DeviceInfo,
+    },
+    Tester {
+        tester: TesterInfo,
+        controller: AttachedController,
+    },
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -189,6 +297,10 @@ pub struct ResolvedTarget {
     pub axis_index: Option<usize>,
     pub axis_direction: Option<i8>,
     pub axis_threshold: Option<f32>,
+    /// Report ID the button/axis index refers to (tester path, generic HID
+    /// with report IDs only); omitted from the JSON otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_id: Option<u8>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -208,8 +320,10 @@ pub struct PollTestSummary {
     pub median_interval_us: Option<f64>,
     pub p95_interval_us: Option<f64>,
     pub max_interval_us: Option<f64>,
-    pub stall_count: usize,
-    pub stall_ms: f64,
+    /// Always set by the Windows-HID path; `None` (JSON null) in the tester
+    /// path when the value is undefined.
+    pub stall_count: Option<usize>,
+    pub stall_ms: Option<f64>,
     pub stall_threshold_us: Option<f64>,
     pub capture_duration_ms: Option<f64>,
 }
@@ -266,6 +380,9 @@ pub struct PollTestResult {
     pub bins: Vec<PollTimingBin>,
     pub intervals_us: Vec<f64>,
     pub stalls: Vec<PollStall>,
+    /// Set only for polling tests through the CH32H417 tester.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tester: Option<crate::tester::model::TesterPollSection>,
 }
 
 #[cfg(all(windows, not(test)))]

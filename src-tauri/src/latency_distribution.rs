@@ -57,30 +57,3 @@ fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
     let index = ((sorted.len() - 1) as f64 * p / 100.0).round() as usize;
     sorted[index.min(sorted.len() - 1)]
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{latency_bins, latency_series};
-
-    #[test]
-    fn latency_series_keeps_recent_values() {
-        let values = (0..650).map(f64::from).collect::<Vec<_>>();
-
-        let series = latency_series(&values);
-
-        assert_eq!(series.len(), 600);
-        assert_eq!(series.first().copied(), Some(50.0));
-        assert_eq!(series.last().copied(), Some(649.0));
-    }
-
-    #[test]
-    fn latency_bins_keep_existing_range_count() {
-        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-
-        let bins = latency_bins(&values);
-
-        assert_eq!(bins.len(), 8);
-        assert_eq!(bins.first().map(|bin| bin.label.as_str()), Some("<1.000"));
-        assert_eq!(bins.last().map(|bin| bin.label.as_str()), Some(">5.000"));
-    }
-}

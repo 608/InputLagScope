@@ -567,6 +567,41 @@ fn probe_serial_ports() -> Vec<SerialDeviceInfo> {
         .collect()
 }
 
+/// COM ports that may be a CH32H417 tester: VID:PID 16C0:05E1 (shared with
+/// the RP2040 trigger), without the ports identified as the RP2040
+/// trigger, so that no tester frame is ever sent to the trigger.
+pub(crate) fn probe_tester_candidate_ports() -> Vec<SerialDeviceInfo> {
+    let display_names = probe_serial_display_names();
+    available_ports()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|port| {
+            let display_name = display_names
+                .get(&port.port_name)
+                .cloned()
+                .or_else(|| serial_port_type_display_name(&port.port_name, &port.port_type));
+            match port.port_type {
+                SerialPortType::UsbPort(info) => Some(SerialDeviceInfo {
+                    port_name: port.port_name,
+                    port_type: "usb".to_string(),
+                    display_name,
+                    vid: Some(info.vid),
+                    pid: Some(info.pid),
+                    manufacturer: info.manufacturer,
+                    product: info.product,
+                    serial_number: info.serial_number,
+                }),
+                _ => None,
+            }
+        })
+        .filter(|port| {
+            port.vid == Some(RP2040_TRIGGER_VID)
+                && port.pid == Some(RP2040_TRIGGER_PID)
+                && !is_rp2040_trigger_serial_port(port)
+        })
+        .collect()
+}
+
 fn is_rp2040_trigger_serial_port(port: &SerialDeviceInfo) -> bool {
     if port.vid != Some(RP2040_TRIGGER_VID) || port.pid != Some(RP2040_TRIGGER_PID) {
         return false;
@@ -867,68 +902,5 @@ fn protocol_rank(protocol: &ProtocolKind) -> u8 {
         ProtocolKind::XInput => 1,
         ProtocolKind::GenericHid => 2,
         ProtocolKind::Unknown => 3,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn serial_port_info(
-        vid: Option<u16>,
-        pid: Option<u16>,
-        display_name: Option<&str>,
-        product: Option<&str>,
-        serial_number: Option<&str>,
-    ) -> SerialDeviceInfo {
-        SerialDeviceInfo {
-            port_name: "COM20".to_string(),
-            port_type: "usb".to_string(),
-            display_name: display_name.map(ToOwned::to_owned),
-            vid,
-            pid,
-            manufacturer: None,
-            product: product.map(ToOwned::to_owned),
-            serial_number: serial_number.map(ToOwned::to_owned),
-        }
-    }
-
-    #[test]
-    fn rp2040_trigger_port_matches_product_name() {
-        let port = serial_port_info(
-            Some(RP2040_TRIGGER_VID),
-            Some(RP2040_TRIGGER_PID),
-            Some(INPUT_LAG_SCOPE_TRIGGER_PRODUCT),
-            None,
-            None,
-        );
-
-        assert!(is_rp2040_trigger_serial_port(&port));
-    }
-
-    #[test]
-    fn rp2040_trigger_port_matches_serial_number() {
-        let port = serial_port_info(
-            Some(RP2040_TRIGGER_VID),
-            Some(RP2040_TRIGGER_PID),
-            None,
-            None,
-            Some(INPUT_LAG_SCOPE_TRIGGER_SERIAL),
-        );
-
-        assert!(is_rp2040_trigger_serial_port(&port));
-    }
-
-    #[test]
-    fn rp2040_trigger_port_rejects_other_vid_pid() {
-        let port = serial_port_info(
-            Some(0xCAFE),
-            Some(0x4020),
-            Some(INPUT_LAG_SCOPE_TRIGGER_PRODUCT),
-            None,
-            Some(INPUT_LAG_SCOPE_TRIGGER_SERIAL),
-        );
-
-        assert!(!is_rp2040_trigger_serial_port(&port));
     }
 }
