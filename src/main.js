@@ -649,7 +649,7 @@ function renderLatencyForm() {
         <label><input type="radio" name="inputType" value="button" ${measure.inputType === "button" ? "checked" : ""} />${t("button")}</label>
         <label><input type="radio" name="inputType" value="axis" ${measure.inputType === "axis" ? "checked" : ""} />${t("axis")}</label>
       </div>
-      <label><span>${t("sampleCount")}</span><input name="sampleCount" type="number" min="1" max="10000" value="${html(measure.sampleCount)}" /></label>
+      <label><span>${t("sampleCount")}</span><input name="sampleCount" type="number" min="1" max="100000" value="${html(measure.sampleCount)}" /></label>
       <label><span>${t("timeoutMs")}</span><input name="timeoutMs" type="number" min="1" max="5000" value="${html(measure.timeoutMs)}" /></label>
       <label><span>${t("retryDelayMs")}</span><input name="retryDelayMs" type="number" min="0" max="1000" value="${html(measure.retryDelayMs)}" /></label>
       ${measure.inputType === "button" ? `
@@ -835,7 +835,7 @@ function renderTesterLatencyForm() {
         </div>
         <small class="field-hint">${t(axis ? "triggerPinStick" : "triggerPinButton")}</small>
       </div>
-      <label><span>${t("sampleCount")}</span><input name="sampleCount" type="number" min="1" max="10000" step="1" value="${html(measure.sampleCount)}" /></label>
+      <label><span>${t("sampleCount")}</span><input name="sampleCount" type="number" min="1" max="100000" step="1" value="${html(measure.sampleCount)}" /></label>
       <label><span>${t("timeoutMs")}</span><input name="timeoutMs" type="number" min="1" max="${U16_MAX}" step="1" value="${html(measure.timeoutMs)}" /></label>
       <label><span>${t("interTrialMs")}</span><input name="interTrialMs" type="number" min="0" max="${U16_MAX}" step="1" value="${html(measure.interTrialMs)}" /></label>
       <label>
@@ -1739,7 +1739,7 @@ function buildTesterMeasurementConfig({ forAutoSet = false } = {}) {
 
   const values = {};
   for (const [key, label, min, max] of [
-    ["sampleCount", t("sampleCount"), 1, 10000],
+    ["sampleCount", t("sampleCount"), 1, 100000],
     ["timeoutMs", t("timeoutMs"), 1, U16_MAX],
     ["interTrialMs", t("interTrialMs"), 0, U16_MAX],
   ]) {

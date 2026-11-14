@@ -143,6 +143,7 @@ struct HeadlessOptions {
     output_dir: String,
     tester: Option<String>,
     seed: Option<u32>,
+    inter_trial_ms: Option<u64>,
     measure_release: bool,
     /// Report ID from `--button-index` / `--axis-index` given as
     /// `report_id:index` (tester path only).
@@ -167,6 +168,7 @@ impl HeadlessOptions {
             output_dir: "results".to_string(),
             tester: None,
             seed: None,
+            inter_trial_ms: None,
             measure_release: false,
             report_id: None,
         };
@@ -205,6 +207,9 @@ impl HeadlessOptions {
                 "--output-dir" => options.output_dir = take_value(&args, &mut index, key)?,
                 "--tester" => options.tester = Some(take_value(&args, &mut index, key)?),
                 "--seed" => options.seed = Some(parse_value(&args, &mut index, key)?),
+                "--inter-trial-ms" => {
+                    options.inter_trial_ms = Some(parse_value(&args, &mut index, key)?)
+                }
                 "--measure-release" => options.measure_release = true,
                 "--help" | "-h" => {
                     print_help();
@@ -217,6 +222,7 @@ impl HeadlessOptions {
         if options.tester.is_none() {
             for (set, name) in [
                 (options.seed.is_some(), "--seed"),
+                (options.inter_trial_ms.is_some(), "--inter-trial-ms"),
                 (options.measure_release, "--measure-release"),
                 (
                     options.report_id.is_some(),
@@ -278,7 +284,7 @@ fn run_tester_headless_with(
         axis_threshold: options.axis_threshold,
         neutral_sample_ms: options.neutral_sample_ms,
         retry_delay_ms: options.retry_delay_ms,
-        inter_trial_ms: None,
+        inter_trial_ms: options.inter_trial_ms,
         output_dir: options.output_dir.clone(),
         measure_release: options.measure_release,
         settle_reports: 3,
@@ -408,6 +414,7 @@ fn print_help() {
          CH32H417 tester:\n\
            --tester <uuid|COMx>      measure through the tester\n\
            --seed <n>                trial random seed (0 = hardware RNG)\n\
+           --inter-trial-ms <ms>     wait between trials (default 15)\n\
            --measure-release         also measure the release latency"
     );
 }

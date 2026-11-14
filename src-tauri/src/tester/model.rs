@@ -276,7 +276,7 @@ pub struct TesterTrialConfig {
     pub trigger_mask: u8,
     pub measure_release: bool,
     pub settle_reports: u8,
-    pub count: u16,
+    pub count: u32,
     pub timeout_ms: u16,
     pub release_timeout_ms: u16,
     pub inter_trial_ms: u16,
@@ -385,10 +385,10 @@ impl From<&TrialResultEvent> for TesterTrialRecord {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TesterRunDone {
     pub run_id: u32,
-    pub requested: u16,
-    pub completed: u16,
-    pub succeeded: u16,
-    pub valid_latency_count: u16,
+    pub requested: u32,
+    pub completed: u32,
+    pub succeeded: u32,
+    pub valid_latency_count: u32,
     pub fail_counts: FailCounts,
     pub completion_reason: u8,
     pub completion_reason_name: String,
@@ -398,10 +398,10 @@ impl From<&RunDoneEvent> for TesterRunDone {
     fn from(done: &RunDoneEvent) -> Self {
         Self {
             run_id: done.run_id,
-            requested: done.requested,
-            completed: done.completed,
-            succeeded: done.succeeded,
-            valid_latency_count: done.valid_latency_count,
+            requested: u32::from(done.requested),
+            completed: u32::from(done.completed),
+            succeeded: u32::from(done.succeeded),
+            valid_latency_count: u32::from(done.valid_latency_count),
             fail_counts: FailCounts::from_array(&done.fail_counts),
             completion_reason: done.completion_reason,
             completion_reason_name: completion_reason_name(done.completion_reason).to_string(),

@@ -384,8 +384,8 @@ pub struct MeasurementOutcome {
 }
 
 pub(super) fn validate_config(config: &TesterMeasurementConfig) -> Result<()> {
-    if !(1..=10_000).contains(&config.sample_count) {
-        bail!("sample count must be 1 to 10000");
+    if !(1..=100_000).contains(&config.sample_count) {
+        bail!("sample count must be 1 to 100000");
     }
     for (name, value) in [
         ("timeout_ms", config.timeout_ms),
@@ -529,11 +529,6 @@ fn update_trial_status(
     }
 }
 
-pub struct TrialRun {
-    pub trials: Vec<TrialResultEvent>,
-    pub run_done: Option<RunDoneEvent>,
-}
-
 /// Sends SET_WATCH and TRIAL_START and collects TRIAL_RESULT events until
 /// RUN_DONE. A stop request sends TRIAL_STOP and still waits for RUN_DONE.
 ///
@@ -542,13 +537,14 @@ pub struct TrialRun {
 /// RUN_DONE is awaited; when TRIAL_STOP is not answered, RUN_DONE is still
 /// awaited. If the end cannot be confirmed, the connection is closed
 /// (`runctl::unconfirmed_end`).
-pub fn run_trials(
+fn run_trials_into(
     client: &TesterClient,
     watch: &WatchSpec,
     request: &TrialStart,
+    trials: &mut Vec<TrialResultEvent>,
     status: &Arc<Mutex<TesterMeasurementStatus>>,
     stop: &AtomicBool,
-) -> Result<TrialRun> {
+) -> Result<Option<RunDoneEvent>> {
     let run_id = request.run_id;
     let events = client.subscribe();
     client.set_watch(watch)?;
@@ -571,8 +567,8 @@ pub fn run_trials(
             + u64::from(request.random_max_us / 1000)
             + 5_000,
     );
-    let mut trials = Vec::<TrialResultEvent>::with_capacity(usize::from(request.count));
     let mut last_progress = Instant::now();
+    let mut last_status_update: Option<Instant> = None;
     let mut stop_sent: Option<(Instant, Duration)> = None;
     loop {
         let stop_requested = stop.load(Ordering::Relaxed);
@@ -611,7 +607,10 @@ pub fn run_trials(
             Ok(TesterEvent::TrialResult(trial)) if trial.run_id == run_id => {
                 trials.push(trial);
                 last_progress = Instant::now();
-                update_trial_status(status, &trials, measure_release);
+                if last_status_update.is_none_or(|t| t.elapsed() >= Duration::from_millis(200)) {
+                    update_trial_status(status, trials, measure_release);
+                    last_status_update = Some(Instant::now());
+                }
             }
             Ok(TesterEvent::RunDone(done)) if done.run_id == run_id => {
                 if let Some(error) = start_error {
@@ -621,10 +620,8 @@ pub fn run_trials(
                         completion_reason_name(done.completion_reason)
                     );
                 }
-                return Ok(TrialRun {
-                    trials,
-                    run_done: Some(done),
-                });
+                update_trial_status(status, trials, measure_release);
+                return Ok(Some(done));
             }
             Ok(TesterEvent::DeviceDetached(event)) => status.lock().push_message(format!(
                 "controller detached (generation {})",
@@ -830,46 +827,105 @@ pub fn run_tester_measurement(
     };
 
     // --- trials
-    let run_id = client.next_run_id()?;
-    let request = TrialStart {
-        run_id,
-        trigger_mask: config.trigger_mask(),
-        measure_release: u8::from(config.measure_release),
-        settle_reports: config.settle_reports,
-        count: config.sample_count as u16,
-        timeout_ms: config.timeout_ms as u16,
-        release_timeout_ms: config.release_timeout_ms as u16,
-        inter_trial_ms: config.inter_trial_ms() as u16,
-        random_max_us: config.random_max_us,
-        seed: config.seed,
-    };
-    {
-        let mut status = status.lock();
-        status.phase = "trials".to_string();
-        status.run_id = Some(run_id);
-        status.target = Some(target.clone());
-        status.watch = Some(watch.clone());
-        status.push_message(format!(
-            "running {} trials (run_id {run_id})",
-            config.sample_count
-        ));
+    const MAX_CHUNK_TRIALS: usize = 10_000;
+    let mut all_trials = Vec::with_capacity(config.sample_count);
+    let mut first_run_id: Option<u32> = None;
+    let mut merged_run_done: Option<TesterRunDone> = None;
+    let mut remaining = config.sample_count;
+    let mut chunk_index: u32 = 0;
+
+    while remaining > 0 {
+        if chunk_index > 0 && stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let chunk_count = remaining.min(MAX_CHUNK_TRIALS);
+        let run_id = client.next_run_id()?;
+        if first_run_id.is_none() {
+            first_run_id = Some(run_id);
+        }
+        let seed = if config.seed == 0 {
+            0
+        } else {
+            let next = config.seed.wrapping_add(chunk_index);
+            if next == 0 { 1 } else { next }
+        };
+        let request = TrialStart {
+            run_id,
+            trigger_mask: config.trigger_mask(),
+            measure_release: u8::from(config.measure_release),
+            settle_reports: config.settle_reports,
+            count: chunk_count as u16,
+            timeout_ms: config.timeout_ms as u16,
+            release_timeout_ms: config.release_timeout_ms as u16,
+            inter_trial_ms: config.inter_trial_ms() as u16,
+            random_max_us: config.random_max_us,
+            seed,
+        };
+        {
+            let mut status = status.lock();
+            status.phase = "trials".to_string();
+            status.run_id = Some(run_id);
+            status.target = Some(target.clone());
+            status.watch = Some(watch.clone());
+            status.push_message(format!(
+                "running {chunk_count} trials (run_id {run_id}, total {})",
+                config.sample_count
+            ));
+        }
+        let chunk_done =
+            run_trials_into(client, &watch, &request, &mut all_trials, status, stop)?;
+        let normal_completion = chunk_done
+            .as_ref()
+            .is_some_and(|done| done.completion_reason == 0);
+        if let Some(done) = chunk_done {
+            let chunk_entry = TesterRunDone::from(&done);
+            merged_run_done = Some(match merged_run_done {
+                None => TesterRunDone {
+                    run_id: first_run_id.unwrap_or(run_id),
+                    requested: config.sample_count as u32,
+                    ..chunk_entry
+                },
+                Some(mut acc) => {
+                    acc.completed += chunk_entry.completed;
+                    acc.succeeded += chunk_entry.succeeded;
+                    acc.valid_latency_count += chunk_entry.valid_latency_count;
+                    acc.fail_counts.success += chunk_entry.fail_counts.success;
+                    acc.fail_counts.timeout += chunk_entry.fail_counts.timeout;
+                    acc.fail_counts.not_released += chunk_entry.fail_counts.not_released;
+                    acc.fail_counts.confirm_reverted += chunk_entry.fail_counts.confirm_reverted;
+                    acc.fail_counts.event_queue_full += chunk_entry.fail_counts.event_queue_full;
+                    acc.fail_counts.disconnected += chunk_entry.fail_counts.disconnected;
+                    acc.fail_counts.aborted += chunk_entry.fail_counts.aborted;
+                    acc.fail_counts.unknown += chunk_entry.fail_counts.unknown;
+                    acc.completion_reason = chunk_entry.completion_reason;
+                    acc.completion_reason_name = chunk_entry.completion_reason_name;
+                    acc
+                }
+            });
+        }
+        remaining -= chunk_count;
+        chunk_index += 1;
+        if stop.load(Ordering::Relaxed) || !normal_completion {
+            break;
+        }
     }
-    let run = run_trials(client, &watch, &request, status, stop)?;
+
+    let run_id = first_run_id.unwrap_or(0);
     let calibration = client.get_calibration().ok();
 
     // --- results
     let stats = compute_tester_stats(
-        &run.trials,
-        run.run_done.as_ref(),
+        &all_trials,
+        merged_run_done.as_ref(),
         config.sample_count,
         config.measure_release,
     );
-    let press = select_press_latencies(&run.trials);
+    let press = select_press_latencies(&all_trials);
     let latencies = press.values_ms();
     let summary = summary_from_distribution(&stats.latency);
     let bins = latency_bins(&latencies);
     let device = device_info_from_controller(tester, controller, iface);
-    let measurement_kind = run.trials.first().map_or(0, |trial| trial.measurement_kind);
+    let measurement_kind = all_trials.first().map_or(0, |trial| trial.measurement_kind);
     let section = TesterMeasurementSection {
         measurement_kind,
         measurement_kind_name: measurement_kind_name(measurement_kind).to_string(),
@@ -886,24 +942,23 @@ pub fn run_tester_measurement(
         ep_in,
         watch: watch.clone(),
         trial_config: TesterTrialConfig {
-            trigger_mask: request.trigger_mask,
+            trigger_mask: config.trigger_mask(),
             measure_release: config.measure_release,
-            settle_reports: request.settle_reports,
-            count: request.count,
-            timeout_ms: request.timeout_ms,
-            release_timeout_ms: request.release_timeout_ms,
-            inter_trial_ms: request.inter_trial_ms,
-            random_max_us: request.random_max_us,
-            seed: request.seed,
+            settle_reports: config.settle_reports,
+            count: config.sample_count as u32,
+            timeout_ms: config.timeout_ms as u16,
+            release_timeout_ms: config.release_timeout_ms as u16,
+            inter_trial_ms: config.inter_trial_ms() as u16,
+            random_max_us: config.random_max_us,
+            seed: config.seed,
         },
-        run_done: run.run_done.as_ref().map(TesterRunDone::from),
+        run_done: merged_run_done.clone(),
         stats: stats.clone(),
-        trials: run.trials.iter().map(TesterTrialRecord::from).collect(),
+        trials: all_trials.iter().map(TesterTrialRecord::from).collect(),
         monitor_dropped_samples: monitor_dropped,
         uncalibrated: stats.uncalibrated,
     };
-    let trials: Vec<TrialResult> = run
-        .trials
+    let trials: Vec<TrialResult> = all_trials
         .iter()
         .zip(press.ticks.iter())
         .map(|(trial, latency)| {
@@ -944,7 +999,7 @@ pub fn run_tester_measurement(
         tester: Some(section),
     })?;
 
-    let completion_reason = run.run_done.as_ref().map(|done| done.completion_reason);
+    let completion_reason = merged_run_done.as_ref().map(|done| done.completion_reason);
     {
         let mut status = status.lock();
         status.base.running = false;

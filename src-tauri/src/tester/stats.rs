@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::models::Summary;
 use crate::stats::percentile_sorted;
 
-use super::protocol::{RunDoneEvent, TrialResultEvent, FAIL_KIND_COUNT};
+use super::protocol::{TrialResultEvent, FAIL_KIND_COUNT};
 
 /// TIM9 runs at 100 MHz: 1 tick = 10 ns.
 pub const TICK_NS: u64 = 10;
@@ -276,7 +276,7 @@ pub struct TesterLatencyStats {
 
 pub fn compute_tester_stats(
     trials: &[TrialResultEvent],
-    run_done: Option<&RunDoneEvent>,
+    run_done: Option<&super::model::TesterRunDone>,
     requested: usize,
     measure_release: bool,
 ) -> TesterLatencyStats {
@@ -292,10 +292,10 @@ pub fn compute_tester_stats(
 
     let (requested, completed, succeeded, fail_counts, source) = match run_done {
         Some(done) => (
-            usize::from(done.requested),
-            usize::from(done.completed),
-            usize::from(done.succeeded),
-            FailCounts::from_array(&done.fail_counts),
+            done.requested as usize,
+            done.completed as usize,
+            done.succeeded as usize,
+            done.fail_counts.clone(),
             "run_done",
         ),
         None => (
